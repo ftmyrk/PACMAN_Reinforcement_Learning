@@ -4,7 +4,7 @@ from stable_baselines3.common.evaluation import evaluate_policy
 import datetime
 
 
-env = gym.make('CartPole-v1',render_mode="human")
+env = gym.make('PACMAN',render_mode="human")
 dqn_model = DQN(
     "MlpPolicy",
     env,
