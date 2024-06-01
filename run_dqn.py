@@ -4,34 +4,47 @@ from buffer import ReplayBuffer
 import numpy as np
 import torch
 import gymnasium as gym
-from torch.utils.tensorboard import SummaryWriter
-import datetime
+import matplotlib.pyplot as plt
+import os
 
+# Ensure the Plots directory exists
+os.makedirs('./Plots', exist_ok=True)
 
 Tensor = torch.DoubleTensor
 torch.set_default_tensor_type(Tensor)
 
-env = gym.make('CartPole-v1',render_mode="human")
+if torch.cuda.is_available():
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    device = torch.device('cuda:0')
+else:
+    device = torch.device('cpu')
+print('Found device at: {}'.format(device))
+
+env = gym.make('ALE/MsPacman-v5', render_mode="human")
 
 config = {
-    'dim_obs': 4,  # Q network input
-    'dim_action': 2,  # Q network output
-    'dims_hidden_neurons': (64, 64),  # Q network hidden
+    'dim_obs': env.observation_space.shape[0],  # Adjust to match environment observation space
+    'dim_action': env.action_space.n,  # Adjust to match environment action space
+    'dims_hidden_neurons': (128, 128),  # Adjusted Q network hidden layers
     'lr': 0.0005,  # learning rate
-    'C': 60,  # copy steps
+    'C': 100,  # copy steps
     'discount': 0.99,  # discount factor
-    'batch_size': 64,
-    'replay_buffer_size': 100000,
+    'batch_size': 32,
+    'replay_buffer_size': 50000,
     'eps_min': 0.01,
     'eps_max': 1.0,
-    'eps_len': 4000,
-    'seed': 1,
+    'eps_len': 10000,
+    'seed': 42,
+    'device': device,
 }
 
 dqn = DQN(config)
 buffer = ReplayBuffer(config)
-train_writer = SummaryWriter(log_dir='tensorboard/dqn_{date:%Y-%m-%d-%H-%M-%S}'.format(
-                             date=datetime.datetime.now()))
+
+# Variables for plotting
+episode_rewards = []
+steps_list = []
+epsilon_list = []
 
 steps = 0  # total number of steps
 for i_episode in range(500):
@@ -41,18 +54,16 @@ for i_episode in range(500):
     t = 0  # time steps within each episode
     ret = 0.  # episodic return
     while done is False and truncated is False:
-        env.render()  # render to screen
-
-        obs = torch.tensor(env.state)  # observe the environment state
+        obs = torch.tensor(observation, dtype=torch.float32).to(device)  # observe the environment state
 
         action = dqn.act_probabilistic(obs[None, :])  # take action
 
-        next_obs, reward, done, truncated,_ = env.step(action)  # environment advance to next step
+        next_obs, reward, done, truncated, _ = env.step(action)  # environment advance to next step
 
         buffer.append_memory(obs=obs,  # put the transition to memory
-                             action=torch.from_numpy(np.array([action])),
-                             reward=torch.from_numpy(np.array([reward])),
-                             next_obs=torch.from_numpy(next_obs),
+                             action=torch.tensor([action], dtype=torch.int64).to(device),
+                             reward=torch.tensor([reward], dtype=torch.float32).to(device),
+                             next_obs=torch.tensor(next_obs, dtype=torch.float32).to(device),
                              done=done)
 
         dqn.update(buffer)  # agent learn
@@ -60,12 +71,40 @@ for i_episode in range(500):
         t += 1
         steps += 1
         ret += reward  # update episodic return
+        observation = next_obs
+
         if done or truncated:
-            print("Episode {} finished after {} timesteps".format(i_episode, t+1))
-        train_writer.add_scalar('Performance/episodic_return', ret, i_episode)  # plot
+            print(f"Episode {i_episode} finished after {t+1} timesteps with return {ret}")
+            episode_rewards.append(ret)
+            steps_list.append(steps)
+            epsilon_list.append(dqn.epsilon)
+            break
 
 env.close()
-train_writer.close()
 
-# To visualize, use the command line(Anaconda Prompt) to redirect into your project directory where the 'tensorboard' folder is present and run the following command:
-# tensorboard --logdir=yourlogdir
+# Plotting
+plt.figure(figsize=(12, 6))
+
+plt.subplot(3, 1, 1)
+plt.plot(episode_rewards)
+plt.title('Episode Rewards')
+plt.xlabel('Episode')
+plt.ylabel('Reward')
+plt.savefig('./Plots/episode_rewards.png')
+
+plt.subplot(3, 1, 2)
+plt.plot(steps_list, episode_rewards)
+plt.title('Rewards vs Steps')
+plt.xlabel('Steps')
+plt.ylabel('Reward')
+plt.savefig('./Plots/rewards_vs_steps.png')
+
+plt.subplot(3, 1, 3)
+plt.plot(epsilon_list)
+plt.title('Epsilon Decay')
+plt.xlabel('Episode')
+plt.ylabel('Epsilon')
+plt.savefig('./Plots/epsilon_decay.png')
+
+plt.tight_layout()
+plt.savefig('./Plots/training_plots.png')  # Save all plots combined

@@ -46,9 +46,29 @@ class DQN:
         done = t.done
 
         self.training_step += 1
+        q_values = self.Q(s)
+        # print(q_values)
+        q_next = self.Q_tar(sp)
+        # print(q_next)
+            
+        q_next_max = q_next.max(dim=1)[0]
+        # print(q_next_max)
 
-        # TODO: perform a single Q network update step. Also update the target Q network every C Q network update steps
+        q_target = r + self.discount * q_next_max * (1 - done)
 
+
+        if a.dim() == 1:
+            a = a.unsqueeze(1)
+        q_value = q_values.gather(1, a).squeeze(-1) 
+        loss_fn = nn.MSELoss()
+        loss = loss_fn(q_value, q_target.detach())
+
+        self.optimizer_Q.zero_grad()
+        loss.backward()
+        self.optimizer_Q.step()
+
+        if self.training_step % self.C == 0:
+            self.Q_tar.load_state_dict(self.Q.state_dict())
 
     def act_probabilistic(self, observation: torch.Tensor):
         # epsilon greedy:
