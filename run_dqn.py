@@ -16,8 +16,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 print('Found device at: {}'.format(device))
 
-gym.register_envs(ale_py)
-env = gym.make("ALE/MsPacman-v5")
+env = gym.make("MsPacman-v4")
 config = {
     'lr': 0.0005,
     'C': 60,
