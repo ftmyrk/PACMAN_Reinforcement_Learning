@@ -3,7 +3,7 @@ import torch.nn as nn
 from typing import Tuple
 from numpy.random import binomial, choice
 
-torch.set_default_device(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class DQN:
     def __init__(self, config):
@@ -20,14 +20,14 @@ class DQN:
         self.state_shape = config['state_shape']
         self.action_size = config['action_size']
 
-        self.Q = QNetwork(self.state_shape, self.action_size)
-        self.Q_tar = QNetwork(self.state_shape, self.action_size)
+        self.Q = QNetwork(self.state_shape, self.action_size).to(device)
+        self.Q_tar = QNetwork(self.state_shape, self.action_size).to(device)
 
         self.optimizer_Q = torch.optim.Adam(self.Q.parameters(), lr=self.lr)
         self.training_step = 0
 
-
     def act_probabilistic(self, observation):
+        observation = observation.to(device)
         # epsilon greedy:
         first_term = self.eps_max * (self.eps_len - self.training_step) / self.eps_len
         eps = max(first_term, self.eps_min)
@@ -45,6 +45,7 @@ class DQN:
         return a
 
     def act_deterministic(self, observation):
+        observation = observation.to(device)
         self.Q.eval()
         Q = self.Q(observation)
         val, a = torch.max(Q, axis=1)
@@ -52,14 +53,13 @@ class DQN:
         return a.item()
 
     def update(self, buffer):
-
         t = buffer.sample(self.batch_size)
 
-        s = t.obs
-        a = t.action
-        r = t.reward.squeeze(-1)
-        sp = t.next_obs
-        done = t.done.float().squeeze(-1)
+        s = t.obs.to(device)
+        a = t.action.to(device)
+        r = t.reward.squeeze(-1).to(device)
+        sp = t.next_obs.to(device)
+        done = t.done.float().squeeze(-1).to(device)
 
         self.training_step += 1
 
@@ -69,11 +69,10 @@ class DQN:
         q_next_max = q_next.max(dim=1)[0]
         q_target = r + self.discount * q_next_max * (1 - done)
 
-
         if a.dim() == 1:
             a = a.unsqueeze(1)
             
-        q_value = q_values.gather(1, a).squeeze(-1) 
+        q_value = q_values.gather(1, a).squeeze(-1)
         loss_fn = nn.MSELoss()
         loss = loss_fn(q_value, q_target.detach())
 
@@ -84,7 +83,8 @@ class DQN:
         if self.training_step % self.C == 0:
             self.update_target_model()
 
-
+    def update_target_model(self):
+        self.Q_tar.load_state_dict(self.Q.state_dict())
 
 class QNetwork(nn.Module):
     def __init__(self, input_shape, action_size):
@@ -99,9 +99,7 @@ class QNetwork(nn.Module):
         self.relu = nn.ReLU()
 
     def forward(self, x):
-        x = x.to(torch.float32).squeeze(dim=1).permute(0, 3, 1, 2)
-        print(x.shape)
-        print(x.dtype)
+        x = x.to(torch.float32).squeeze(dim=1).permute(0, 3, 1, 2).to(device)
         x = self.relu(self.conv1(x))
         x = self.relu(self.conv2(x))
         x = self.relu(self.conv3(x))

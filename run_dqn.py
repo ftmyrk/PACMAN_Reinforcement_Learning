@@ -12,15 +12,9 @@ import os
 # Ensure the Plots directory exists
 os.makedirs('./Plots', exist_ok=True)
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-if torch.cuda.is_available():
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    device = torch.device('cuda:0')
-else:
-    device = torch.device('cpu')
 print('Found device at: {}'.format(device))
-
-# gym.register_envs(ale_py)
 
 env = gym.make("ALE/MsPacman-v5")
 config = {
@@ -45,7 +39,6 @@ config = {
 dqn = DQN(config)
 buffer = ReplayBuffer(config)
 
-
 episode_rewards = []
 steps_list = []
 epsilon_list = []
@@ -61,16 +54,16 @@ for i_episode in range(20):
     while done is False and truncated is False:
         # env.render()  # render to screen, not working for jupyter
 
-        obs = torch.tensor(state)  # observe the environment state
+        obs = torch.tensor(state).to(device)  # observe the environment state
 
-        action = dqn.act_probabilistic(state[None, :])  # take action
+        action = dqn.act_probabilistic(obs)  # take action
 
         next_obs, reward, done, info,_ = env.step(action)  # environment advance to next step
 
         buffer.append_memory(obs=obs,  # put the transition to memory
-                             action=torch.from_numpy(np.array([action])),
-                             reward=torch.from_numpy(np.array([reward])),
-                             next_obs=torch.from_numpy(next_obs),
+                             action=torch.from_numpy(np.array([action])).to(device),
+                             reward=torch.from_numpy(np.array([reward])).to(device),
+                             next_obs=torch.from_numpy(next_obs).to(device),
                              done=done)
 
         dqn.update(buffer)  # agent learn
@@ -82,7 +75,6 @@ for i_episode in range(20):
             print(f"Episode {i_episode} finished after {t+1} timesteps with return {ret}")
             episode_rewards.append(ret)
             steps_list.append(steps)
-            epsilon_list.append(dqn.epsilon)
             break
 
 env.close()
@@ -103,12 +95,4 @@ plt.title('Rewards vs Steps')
 plt.xlabel('Steps')
 plt.ylabel('Reward')
 plt.savefig('./Plots/rewards_vs_steps.png')
-plt.close()
-
-plt.subplot(3, 1, 3)
-plt.plot(epsilon_list)
-plt.title('Epsilon Decay')
-plt.xlabel('Episode')
-plt.ylabel('Epsilon')
-plt.savefig('./Plots/epsilon_decay.png')
 plt.close()
