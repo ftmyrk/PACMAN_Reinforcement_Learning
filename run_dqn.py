@@ -1,6 +1,8 @@
 from dqn import DQN
 from buffer import ReplayBuffer
 
+import ale_py
+
 import numpy as np
 import torch
 import gymnasium as gym
@@ -10,8 +12,6 @@ import os
 # Ensure the Plots directory exists
 os.makedirs('./Plots', exist_ok=True)
 
-Tensor = torch.DoubleTensor
-torch.set_default_tensor_type(Tensor)
 
 if torch.cuda.is_available():
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
@@ -20,50 +20,57 @@ else:
     device = torch.device('cpu')
 print('Found device at: {}'.format(device))
 
-env = gym.make('ALE/MsPacman-v5', render_mode="human")
+# gym.register_envs(ale_py)
 
+env = gym.make("ALE/MsPacman-v5")
 config = {
-    'dim_obs': env.observation_space.shape[0],  # Adjust to match environment observation space
-    'dim_action': env.action_space.n,  # Adjust to match environment action space
-    'dims_hidden_neurons': (128, 128),  # Adjusted Q network hidden layers
-    'lr': 0.0005,  # learning rate
-    'C': 100,  # copy steps
-    'discount': 0.99,  # discount factor
+    'lr': 0.0005,
+    'C': 60,
+    'discount': 0.99,
     'batch_size': 32,
-    'replay_buffer_size': 50000,
+    'replay_buffer_size': 100000,
     'eps_min': 0.01,
     'eps_max': 1.0,
-    'eps_len': 10000,
-    'seed': 42,
-    'device': device,
+    'eps_len': 4000,
+    'seed': 1,
+    'state_shape': env.observation_space.shape,
+    'action_size': env.action_space.n,
+    'n_episodes': 1000,
+    'gamma': 0.99,
+    'epsilon_decay': 0.995,
+    'target_update_freq': 10,
+    'dims_hidden_neurons': (64, 64),
 }
 
 dqn = DQN(config)
 buffer = ReplayBuffer(config)
 
-# Variables for plotting
+
 episode_rewards = []
 steps_list = []
 epsilon_list = []
 
 steps = 0  # total number of steps
-for i_episode in range(500):
-    observation = env.reset()
+for i_episode in range(20):
+    state = env.reset()[0]
+    state = np.reshape(state, [1] + list(config['state_shape']))
     done = False
     truncated = False
     t = 0  # time steps within each episode
     ret = 0.  # episodic return
     while done is False and truncated is False:
-        obs = torch.tensor(observation, dtype=torch.float32).to(device)  # observe the environment state
+        # env.render()  # render to screen, not working for jupyter
 
-        action = dqn.act_probabilistic(obs[None, :])  # take action
+        obs = torch.tensor(state)  # observe the environment state
 
-        next_obs, reward, done, truncated, _ = env.step(action)  # environment advance to next step
+        action = dqn.act_probabilistic(state[None, :])  # take action
+
+        next_obs, reward, done, info,_ = env.step(action)  # environment advance to next step
 
         buffer.append_memory(obs=obs,  # put the transition to memory
-                             action=torch.tensor([action], dtype=torch.int64).to(device),
-                             reward=torch.tensor([reward], dtype=torch.float32).to(device),
-                             next_obs=torch.tensor(next_obs, dtype=torch.float32).to(device),
+                             action=torch.from_numpy(np.array([action])),
+                             reward=torch.from_numpy(np.array([reward])),
+                             next_obs=torch.from_numpy(next_obs),
                              done=done)
 
         dqn.update(buffer)  # agent learn
@@ -71,8 +78,6 @@ for i_episode in range(500):
         t += 1
         steps += 1
         ret += reward  # update episodic return
-        observation = next_obs
-
         if done or truncated:
             print(f"Episode {i_episode} finished after {t+1} timesteps with return {ret}")
             episode_rewards.append(ret)
@@ -82,7 +87,6 @@ for i_episode in range(500):
 
 env.close()
 
-# Plotting
 plt.figure(figsize=(12, 6))
 
 plt.subplot(3, 1, 1)
@@ -91,6 +95,7 @@ plt.title('Episode Rewards')
 plt.xlabel('Episode')
 plt.ylabel('Reward')
 plt.savefig('./Plots/episode_rewards.png')
+plt.close()
 
 plt.subplot(3, 1, 2)
 plt.plot(steps_list, episode_rewards)
@@ -98,6 +103,7 @@ plt.title('Rewards vs Steps')
 plt.xlabel('Steps')
 plt.ylabel('Reward')
 plt.savefig('./Plots/rewards_vs_steps.png')
+plt.close()
 
 plt.subplot(3, 1, 3)
 plt.plot(epsilon_list)
@@ -105,6 +111,4 @@ plt.title('Epsilon Decay')
 plt.xlabel('Episode')
 plt.ylabel('Epsilon')
 plt.savefig('./Plots/epsilon_decay.png')
-
-plt.tight_layout()
-plt.savefig('./Plots/training_plots.png')  # Save all plots combined
+plt.close()

@@ -1,64 +1,78 @@
 import torch
 import torch.nn as nn
-
 from typing import Tuple
-from numpy.random import binomial
-from numpy.random import choice
+from numpy.random import binomial, choice
 
-Tensor = torch.DoubleTensor
-torch.set_default_tensor_type(Tensor)
-
+torch.set_default_device(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
 
 class DQN:
     def __init__(self, config):
-
         torch.manual_seed(config['seed'])
-
-        self.lr = config['lr']  # learning rate
-        self.C = config['C']  # copy steps
-        self.eps_len = config['eps_len']  # length of epsilon greedy exploration
+        
+        self.lr = config['lr']
+        self.C = config['C']
+        self.eps_len = config['eps_len']
         self.eps_max = config['eps_max']
         self.eps_min = config['eps_min']
-        self.discount = config['discount']  # discount factor
-        self.batch_size = config['batch_size']  # mini batch size
+        self.discount = config['discount']
+        self.batch_size = config['batch_size']
 
-        self.dims_hidden_neurons = config['dims_hidden_neurons']
-        self.dim_obs = config['dim_obs']
-        self.dim_action = config['dim_action']
+        self.state_shape = config['state_shape']
+        self.action_size = config['action_size']
 
-        self.Q = QNetwork(dim_obs=self.dim_obs,
-                          dim_action=self.dim_action,
-                          dims_hidden_neurons=self.dims_hidden_neurons)
-        self.Q_tar = QNetwork(dim_obs=self.dim_obs,
-                              dim_action=self.dim_action,
-                              dims_hidden_neurons=self.dims_hidden_neurons)
+        self.Q = QNetwork(self.state_shape, self.action_size)
+        self.Q_tar = QNetwork(self.state_shape, self.action_size)
 
         self.optimizer_Q = torch.optim.Adam(self.Q.parameters(), lr=self.lr)
         self.training_step = 0
 
+
+    def act_probabilistic(self, observation):
+        # epsilon greedy:
+        first_term = self.eps_max * (self.eps_len - self.training_step) / self.eps_len
+        eps = max(first_term, self.eps_min)
+
+        explore = binomial(1, eps)
+
+        if explore == 1:
+            a = choice(self.action_size)
+        else:
+            self.Q.eval()
+            Q = self.Q(observation)
+            val, a = torch.max(Q, axis=1)
+            a = a.item()
+            self.Q.train()
+        return a
+
+    def act_deterministic(self, observation):
+        self.Q.eval()
+        Q = self.Q(observation)
+        val, a = torch.max(Q, axis=1)
+        self.Q.train()
+        return a.item()
+
     def update(self, buffer):
+
         t = buffer.sample(self.batch_size)
 
         s = t.obs
         a = t.action
-        r = t.reward
+        r = t.reward.squeeze(-1)
         sp = t.next_obs
-        done = t.done
+        done = t.done.float().squeeze(-1)
 
         self.training_step += 1
-        q_values = self.Q(s)
-        # print(q_values)
-        q_next = self.Q_tar(sp)
-        # print(q_next)
-            
-        q_next_max = q_next.max(dim=1)[0]
-        # print(q_next_max)
 
+        q_values = self.Q(s)
+        q_next = self.Q_tar(sp)
+
+        q_next_max = q_next.max(dim=1)[0]
         q_target = r + self.discount * q_next_max * (1 - done)
 
 
         if a.dim() == 1:
             a = a.unsqueeze(1)
+            
         q_value = q_values.gather(1, a).squeeze(-1) 
         loss_fn = nn.MSELoss()
         loss = loss_fn(q_value, q_target.detach())
@@ -68,63 +82,30 @@ class DQN:
         self.optimizer_Q.step()
 
         if self.training_step % self.C == 0:
-            self.Q_tar.load_state_dict(self.Q.state_dict())
+            self.update_target_model()
 
-    def act_probabilistic(self, observation: torch.Tensor):
-        # epsilon greedy:
-        first_term = self.eps_max * (self.eps_len - self.training_step) / self.eps_len
-        eps = max(first_term, self.eps_min)
-
-        explore = binomial(1, eps)
-
-        if explore == 1:
-            a = choice(self.dim_action)
-        else:
-            self.Q.eval()
-            Q = self.Q(observation)
-            val, a = torch.max(Q, axis=1)
-            a = a.item()
-            self.Q.train()
-        return a
-
-    def act_deterministic(self, observation: torch.Tensor):
-        self.Q.eval()
-        Q = self.Q(observation)
-        val, a = torch.max(Q, axis=1)
-        self.Q.train()
-        return a.item()
 
 
 class QNetwork(nn.Module):
-    def __init__(self,
-                 dim_obs: int,
-                 dim_action: int,
-                 dims_hidden_neurons: Tuple[int] = (64, 64)):
-        if not isinstance(dim_obs, int):
-            TypeError('dimension of observation must be int')
-        if not isinstance(dim_action, int):
-            TypeError('dimension of action must be int')
-        if not isinstance(dims_hidden_neurons, tuple):
-            TypeError('dimensions of hidden neurons must be tuple of int')
-
+    def __init__(self, input_shape, action_size):
         super(QNetwork, self).__init__()
-        self.num_layers = len(dims_hidden_neurons)
-        self.dim_action = dim_action
+        self.conv1 = nn.Conv2d(input_shape[-1], 32, kernel_size=8, stride=4)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+        self.flatten = nn.Flatten(start_dim=1)
+        self.fc1 = nn.Linear(256 * 88, 512)  
+        self.fc2 = nn.Linear(512, 256)
+        self.output = nn.Linear(256, action_size)
+        self.relu = nn.ReLU()
 
-        n_neurons = (dim_obs, ) + dims_hidden_neurons + (dim_action, )
-        for i, (dim_in, dim_out) in enumerate(zip(n_neurons[:-2], n_neurons[1:-1])):
-            layer = nn.Linear(dim_in, dim_out).double()
-            torch.nn.init.xavier_uniform_(layer.weight)
-            torch.nn.init.zeros_(layer.bias)
-            exec('self.layer{} = layer'.format(i + 1))
-
-        self.output = nn.Linear(n_neurons[-2], n_neurons[-1]).double()
-        torch.nn.init.xavier_uniform_(self.output.weight)
-        torch.nn.init.zeros_(self.output.bias)
-
-    def forward(self, observation: torch.Tensor):
-        x = observation.double()
-        for i in range(self.num_layers):
-            x = eval('torch.tanh(self.layer{}(x))'.format(i + 1))
+    def forward(self, x):
+        x = x.to(torch.float32).squeeze(dim=1).permute(0, 3, 1, 2)
+        print(x.shape)
+        print(x.dtype)
+        x = self.relu(self.conv1(x))
+        x = self.relu(self.conv2(x))
+        x = self.relu(self.conv3(x))
+        x = self.flatten(x)
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
         return self.output(x)
-
