@@ -16,7 +16,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 print('Found device at: {}'.format(device))
 
-env = gym.make("MsPacman-v4")
+env = gym.make("MsPacman-v0", frameskip=4)
 config = {
     'lr': 0.0005,
     'C': 60,
