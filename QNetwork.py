@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 GAMMA = 0.99
 BATCH_SIZE = 32
 REPLAY_MEMORY_SIZE = 10000
-LR = 0.00025
+LR = 0.0005
 EPSILON_START = 1.0
 EPSILON_END = 0.1
 EPSILON_DECAY = 1000000
@@ -61,7 +61,16 @@ class DQNAgent:
         self.memory.append((state, action, reward, next_state, done))
 
     def sample_batch(self):
-        return random.sample(self.memory, BATCH_SIZE)
+        transitions = random.sample(self.memory, BATCH_SIZE)
+        state_batch, action_batch, reward_batch, next_state_batch, done_batch = zip(*transitions)
+
+        state_batch = np.array(state_batch)
+        action_batch = np.array(action_batch)
+        reward_batch = np.array(reward_batch)
+        next_state_batch = np.array(next_state_batch)
+        done_batch = np.array(done_batch)
+
+        return state_batch, action_batch, reward_batch, next_state_batch, done_batch
 
     def update_target_network(self):
         self.target_network.load_state_dict(self.q_network.state_dict())
@@ -69,8 +78,7 @@ class DQNAgent:
     def optimize_model(self):
         if len(self.memory) < BATCH_SIZE:
             return
-        transitions = self.sample_batch()
-        state_batch, action_batch, reward_batch, next_state_batch, done_batch = zip(*transitions)
+        state_batch, action_batch, reward_batch, next_state_batch, done_batch = self.sample_batch()
 
         state_batch = torch.tensor(state_batch, device=self.device, dtype=torch.float32)
         action_batch = torch.tensor(action_batch, device=self.device, dtype=torch.long).unsqueeze(1)
@@ -96,6 +104,8 @@ def preprocess_frame(frames):
 
 def train(agent, env, num_episodes):
     episode_rewards = []
+    best_reward = -float('inf')
+
     for episode in range(num_episodes):
         state = preprocess_frame(env.reset())
         total_reward = 0
@@ -109,16 +119,23 @@ def train(agent, env, num_episodes):
             state = next_state
             total_reward += reward
         episode_rewards.append(total_reward)
+
+        if total_reward > best_reward:
+            best_reward = total_reward
+            torch.save(agent.q_network.state_dict(), 'best_model.pth')
+            print(f"New best model saved with reward: {best_reward}")
+
         if episode % TARGET_UPDATE_FREQ == 0:
             agent.update_target_network()
-        print(f"Episode {episode + 1}, Total Reward: {total_reward}")
+
+        print(f"Episode {episode + 1}, Total Reward: {total_reward}, Best Reward: {best_reward}")
 
     return episode_rewards
 
 if __name__ == "__main__":
     env = gym.make('ALE/MsPacman-v5', frameskip=4)
     num_actions = env.action_space.n
-    state_shape = (1, 88, 80)  # preprocessed frame shape
+    state_shape = (1, 88, 80) 
 
     agent = DQNAgent(state_shape, num_actions)
     num_episodes = 1000
@@ -129,3 +146,6 @@ if __name__ == "__main__":
     plt.xlabel('Episode')
     plt.ylabel('Total Reward')
     plt.show()
+
+    # Load the best model for evaluation or further training
+    agent.q_network.load_state_dict(torch.load('best_model.pth'))
