@@ -7,6 +7,8 @@ import numpy as np
 from collections import deque
 import random
 import matplotlib.pyplot as plt
+import os
+import scipy.io as sio
 
 # Hyperparameters
 GAMMA = 0.99
@@ -39,6 +41,7 @@ class DQNAgent:
     def __init__(self, state_shape, num_actions):
         self.num_actions = num_actions
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"Using device: {self.device}")  # Print the device being used
         self.q_network = QNetwork(state_shape, num_actions).to(self.device)
         self.target_network = QNetwork(state_shape, num_actions).to(self.device)
         self.target_network.load_state_dict(self.q_network.state_dict())
@@ -95,21 +98,22 @@ class DQNAgent:
         loss.backward()
         self.optimizer.step()
 
-def preprocess_frame(frames):
-    frame = frames[0] if isinstance(frames, tuple) else frames
-    if len(frame.shape) == 3:
-        frame = np.mean(frame, axis=2).astype(np.uint8)
-    frame = frame[1:176:2, ::2]
-    return np.expand_dims(frame, axis=0) / 255.0
+def preprocess_frame(frame, grayscale=True):
+    if grayscale:
+        if len(frame.shape) == 3:
+            frame = np.mean(frame, axis=2).astype(np.uint8)
+        frame = frame[1:176:2, ::2]
+        frame = np.expand_dims(frame, axis=0)
+    frame = frame / 255.0
+    return frame
 
-def train(agent, env, num_episodes):
-    episode_rewards = []
-    best_reward = -float('inf')
-
+def train(agent, env, num_episodes, best_reward, episode_rewards):
     for episode in range(num_episodes):
-        state = preprocess_frame(env.reset())
+        state, _ = env.reset()
+        state = preprocess_frame(state)
         total_reward = 0
         done = False
+
         while not done:
             action = agent.select_action(state)
             next_state, reward, done, _, _ = env.step(action)
@@ -118,12 +122,14 @@ def train(agent, env, num_episodes):
             agent.optimize_model()
             state = next_state
             total_reward += reward
+
         episode_rewards.append(total_reward)
 
         if total_reward > best_reward:
             best_reward = total_reward
             torch.save(agent.q_network.state_dict(), 'best_model.pth')
             print(f"New best model saved with reward: {best_reward}")
+            sio.savemat('training_data.mat', {'best_reward': best_reward, 'episode_rewards': episode_rewards})
 
         if episode % TARGET_UPDATE_FREQ == 0:
             agent.update_target_network()
@@ -132,20 +138,34 @@ def train(agent, env, num_episodes):
 
     return episode_rewards
 
-if __name__ == "__main__":
-    env = gym.make('ALE/MsPacman-v5', frameskip=4)
-    num_actions = env.action_space.n
-    state_shape = (1, 88, 80) 
+env = gym.make('ALE/MsPacman-v5', frameskip=4)
+num_actions = env.action_space.n
+state_shape = (1, 88, 80)
 
-    agent = DQNAgent(state_shape, num_actions)
-    num_episodes = 1000
-    rewards = train(agent, env, num_episodes)
+agent = DQNAgent(state_shape, num_actions)
+num_episodes = 1000
+best_reward = 0
+episode_rewards = []
 
-    # Plotting
-    plt.plot(rewards)
-    plt.xlabel('Episode')
-    plt.ylabel('Total Reward')
-    plt.show()
-
-    # Load the best model for evaluation or further training
+# Load existing model and training data if available
+if os.path.exists('best_model.pth'):
     agent.q_network.load_state_dict(torch.load('best_model.pth'))
+    print("Best model loaded.")
+
+if os.path.exists('training_data.mat'):
+    data = sio.loadmat('training_data.mat')
+    best_reward = data['best_reward'][0][0]
+    episode_rewards = data['episode_rewards'][0].tolist()
+    print(f"Training data loaded. Best reward: {best_reward}")
+
+# Continue training
+episode_rewards = train(agent, env, num_episodes, best_reward, episode_rewards)
+
+# Plotting
+plt.plot(episode_rewards)
+plt.xlabel('Episode')
+plt.ylabel('Total Reward')
+plt.show()
+
+# Load the best model for evaluation or further training
+agent.q_network.load_state_dict(torch.load('best_model.pth'))
