@@ -125,11 +125,29 @@ def train(agent, env, num_episodes, best_reward, episode_rewards):
 
         episode_rewards.append(total_reward)
 
+        # Save the model after every episode
+        torch.save({
+            'model_state_dict': agent.q_network.state_dict(),
+            'optimizer_state_dict': agent.optimizer.state_dict(),
+            'best_reward': best_reward,
+            'episode_rewards': episode_rewards,
+            'steps_done': agent.steps_done
+        }, 'last_model.pth')
+
+        # Save if it's the best model so far
         if total_reward > best_reward:
             best_reward = total_reward
-            torch.save(agent.q_network.state_dict(), 'best_model.pth')
+            torch.save({
+                'model_state_dict': agent.q_network.state_dict(),
+                'optimizer_state_dict': agent.optimizer.state_dict(),
+                'best_reward': best_reward,
+                'episode_rewards': episode_rewards,
+                'steps_done': agent.steps_done
+            }, 'best_model.pth')
             print(f"New best model saved with reward: {best_reward}")
-            sio.savemat('training_data.mat', {'best_reward': best_reward, 'episode_rewards': episode_rewards})
+
+        # Save the training data to a .mat file
+        sio.savemat('training_data.mat', {'best_reward': best_reward, 'episode_rewards': episode_rewards})
 
         if episode % TARGET_UPDATE_FREQ == 0:
             agent.update_target_network()
@@ -148,9 +166,14 @@ best_reward = 0
 episode_rewards = []
 
 # Load existing model and training data if available
-if os.path.exists('best_model.pth'):
-    agent.q_network.load_state_dict(torch.load('best_model.pth'))
-    print("Best model loaded.")
+if os.path.exists('last_model.pth'):
+    checkpoint = torch.load('last_model.pth')
+    agent.q_network.load_state_dict(checkpoint['model_state_dict'])
+    agent.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+    best_reward = checkpoint['best_reward']
+    episode_rewards = checkpoint['episode_rewards']
+    agent.steps_done = checkpoint['steps_done']
+    print(f"Latest model loaded with reward: {best_reward}")
 
 if os.path.exists('training_data.mat'):
     data = sio.loadmat('training_data.mat')
@@ -166,6 +189,3 @@ plt.plot(episode_rewards)
 plt.xlabel('Episode')
 plt.ylabel('Total Reward')
 plt.show()
-
-# Load the best model for evaluation or further training
-agent.q_network.load_state_dict(torch.load('best_model.pth'))
