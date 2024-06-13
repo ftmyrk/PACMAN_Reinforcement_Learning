@@ -161,7 +161,7 @@ num_actions = env.action_space.n
 state_shape = (1, 88, 80)
 
 agent = DQNAgent(state_shape, num_actions)
-num_episodes = 1000
+num_episodes = 5000
 best_reward = 0
 episode_rewards = []
 
